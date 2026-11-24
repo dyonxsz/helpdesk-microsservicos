@@ -3,7 +3,9 @@
 Sistema de chamados de TI (no estilo de um GLPI simplificado) feito em **Python + FastAPI**,
 agora dividido em **serviços independentes**, cada um com o seu banco, atrás de um **API Gateway**.
 
-> Projeto da disciplina **Arquitetura de Software** — transformação do monólito `helpdesk-ti`
+> 🎬 **Vídeo de demonstração:** [assistir no YouTube](https://youtu.be/NnQzSazOsPM)
+>
+> Projeto da disciplina **Arquitetura de Software** - transformação do monólito `helpdesk-ti`
 > em microsserviços.
 
 ## O que mudou em relação ao monólito
