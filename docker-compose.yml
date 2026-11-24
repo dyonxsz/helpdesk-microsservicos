@@ -1,15 +1,190 @@
+# HelpDesk TI em microsserviços.
+#
+# Sobe tudo com:  docker compose up --build
+# Antes, copie .env.example para .env e defina JWT_SEGREDO (mínimo 32 caracteres).
+#
+# Só o gateway publica porta. Serviços e bancos ficam na rede interna do Compose.
+
+name: helpdesk
+
 services:
-  helpdesk:
-    build: .
-    ports:
-      - "127.0.0.1:8000:8000"   # só acessível pelo próprio computador
-    env_file:
-      - path: .env
-        required: false
+  usuarios:
+    build:
+      context: .
+      dockerfile: servicos/usuarios/Dockerfile
     environment:
+      JWT_SEGREDO: ${JWT_SEGREDO:?Defina JWT_SEGREDO no arquivo .env (mínimo 32 caracteres)}
+      TOKEN_MINUTOS: ${TOKEN_MINUTOS:-60}
       DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+      SENHA_EXEMPLO: ${SENHA_EXEMPLO:-Helpdesk2026}
+      DOCS: ${DOCS:-1}
+      DATABASE_URL: sqlite:////dados/usuarios.db
     volumes:
-      - dados:/dados
+      - dados_usuarios:/dados
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  inventario:
+    build:
+      context: .
+      dockerfile: servicos/inventario/Dockerfile
+    environment:
+      JWT_SEGREDO: ${JWT_SEGREDO:?Defina JWT_SEGREDO no arquivo .env (mínimo 32 caracteres)}
+      TOKEN_MINUTOS: ${TOKEN_MINUTOS:-60}
+      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+      DOCS: ${DOCS:-1}
+      DATABASE_URL: sqlite:////dados/inventario.db
+    volumes:
+      - dados_inventario:/dados
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  chamados:
+    build:
+      context: .
+      dockerfile: servicos/chamados/Dockerfile
+    environment:
+      JWT_SEGREDO: ${JWT_SEGREDO:?Defina JWT_SEGREDO no arquivo .env (mínimo 32 caracteres)}
+      TOKEN_MINUTOS: ${TOKEN_MINUTOS:-60}
+      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+      SENHA_EXEMPLO: ${SENHA_EXEMPLO:-Helpdesk2026}
+      DOCS: ${DOCS:-1}
+      DATABASE_URL: sqlite:////dados/chamados.db
+      USUARIOS_URL: http://usuarios:8000
+      INVENTARIO_URL: http://inventario:8000
+      REDIS_URL: redis://redis:6379/0
+      HTTP_TIMEOUT: ${HTTP_TIMEOUT:-3}
+    volumes:
+      - dados_chamados:/dados
+    depends_on:
+      usuarios:
+        condition: service_healthy
+      inventario:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  notificacoes:
+    build:
+      context: .
+      dockerfile: servicos/notificacoes/Dockerfile
+    environment:
+      JWT_SEGREDO: ${JWT_SEGREDO:?Defina JWT_SEGREDO no arquivo .env (mínimo 32 caracteres)}
+      TOKEN_MINUTOS: ${TOKEN_MINUTOS:-60}
+      DOCS: ${DOCS:-1}
+      DATABASE_URL: sqlite:////dados/notificacoes.db
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - dados_notificacoes:/dados
+    depends_on:
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  redis:
+    image: redis:7-alpine
+    # Fila de eventos: sem persistência em disco, o que basta para os avisos
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    # O entrypoint oficial usa setpriv para trocar de usuário; com cap_drop ALL
+    # isso falha. Rodando já como "redis", o entrypoint executa direto.
+    user: redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    ports:
+      # Único ponto de entrada, acessível só pelo próprio computador
+      - "127.0.0.1:8000:8000"
+    environment:
+      USUARIOS_URL: http://usuarios:8000
+      INVENTARIO_URL: http://inventario:8000
+      CHAMADOS_URL: http://chamados:8000
+      NOTIFICACOES_URL: http://notificacoes:8000
+      PROXY_TIMEOUT: ${PROXY_TIMEOUT:-10}
+    depends_on:
+      usuarios:
+        condition: service_healthy
+      inventario:
+        condition: service_healthy
+      chamados:
+        condition: service_healthy
+      notificacoes:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    init: true
+    restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp
@@ -19,4 +194,7 @@ services:
       - ALL
 
 volumes:
-  dados:
+  dados_usuarios:
+  dados_inventario:
+  dados_chamados:
+  dados_notificacoes:
